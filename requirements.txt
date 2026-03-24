@@ -1,0 +1,11 @@
+# Kafka - Para publicar eventos (PARTE 1)
+confluent-kafka
+
+faker>=20.0.0
+
+
+# Logging
+loguru~=0.7.3
+
+# Configuración desde .env
+python-dotenv~=1.2.1

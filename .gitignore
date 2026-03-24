@@ -1,0 +1,78 @@
+# -----------------------------
+# Sistema operativo y editor
+# -----------------------------
+.DS_Store
+Thumbs.db
+
+.vscode/
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/tasks.json
+
+# -----------------------------
+# Python
+# -----------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+
+.Python
+venv/
+.venv/
+env/
+
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# -----------------------------
+# Logs y temporales
+# -----------------------------
+*.log
+logs/
+tmp/
+temp/
+*.tmp
+
+# -----------------------------
+# Entornos y secretos
+# -----------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+
+# -----------------------------
+# Artefactos de datos locales
+# -----------------------------
+# Todo el directorio de volúmenes de Docker se considera estado local
+# (bases de datos, warehouses, locks, checkpoints, caches, etc.).
+volumes/**
+
+# Excepciones opcionales para versionar código/config dentro de volumes
+# !volumes/airflow/
+# volumes/airflow/**
+# !volumes/airflow/dags/
+# !volumes/airflow/dags/**
+
+# !volumes/trino/
+# volumes/trino/**
+# !volumes/trino/catalog/
+# !volumes/trino/catalog/**
+
+# -----------------------------
+# Spark / Java
+# -----------------------------
+*.jar
+*.class
+
+# -----------------------------
+# Notebooks (si se usan)
+# -----------------------------
+.ipynb_checkpoints/

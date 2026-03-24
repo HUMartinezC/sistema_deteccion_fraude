@@ -1,0 +1,314 @@
+networks:
+  data-net:
+    driver: bridge
+
+services:
+  # -------------------
+  # Trino
+  # -------------------
+  trino:
+    image: trinodb/trino:440
+    container_name: trino
+    networks:
+      - data-net
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./volumes/trino/catalog:/etc/trino/catalog
+    depends_on:
+      - iceberg-rest
+      - minio
+
+  # -------------------
+  # Iceberg REST
+  # -------------------
+  iceberg-rest:
+    image: tabulario/iceberg-rest:latest
+    container_name: iceberg-rest
+    networks:
+      - data-net
+    ports:
+      - "8181:8181"
+    environment:
+      CATALOG_WAREHOUSE: s3://warehouse/
+      CATALOG_IO__IMPL: org.apache.iceberg.aws.s3.S3FileIO
+      CATALOG_S3_ENDPOINT: http://minio:9000
+      CATALOG_S3_PATH__STYLE__ACCESS: "true"
+      CATALOG_S3_ACCESS__KEY__ID: admin
+      CATALOG_S3_SECRET__ACCESS__KEY: admin123
+      AWS_REGION: us-east-1
+    depends_on:
+      - minio
+
+  # -------------------
+  # MinIO
+  # -------------------
+  minio:
+    image: minio/minio
+    container_name: minio
+    user: "0:0"
+    networks:
+      - data-net
+    command: server /data --console-address ":9001"
+    ports:
+      - "9100:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: admin
+      MINIO_ROOT_PASSWORD: admin123
+    volumes:
+      - minio-data:/data
+
+  minio-init:
+    image: minio/mc:latest
+    networks:
+      - data-net
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -lc "
+      mc alias set local http://minio:9000 admin admin123 &&
+      mc mb -p local/warehouse || true &&
+      mc anonymous set none local/warehouse || true &&
+      echo '✅ bucket warehouse listo';
+      "
+
+  # -------------------
+  # Spark Notebook
+  # -------------------
+  spark-notebook:
+    image: jupyter/pyspark-notebook:latest
+    container_name: spark-notebook
+    user: "0:0"
+    networks:
+      - data-net
+    ports:
+      - "8889:8888"
+    environment:
+      JUPYTER_TOKEN: "iespsur"
+      SPARK_LOCAL_DIRS: /tmp
+      AWS_REGION: us-east-1
+      AWS_DEFAULT_REGION: us-east-1
+      AWS_EC2_METADATA_DISABLED: "true"
+      AWS_ACCESS_KEY_ID: admin
+      AWS_SECRET_ACCESS_KEY: admin123
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
+    volumes:
+      - ./volumes/spark/conf:/usr/local/spark/conf
+      - ./volumes/spark/ivy2:/home/jovyan/.ivy2
+      - ./volumes/spark/work:/home/jovyan/work
+    depends_on:
+      - iceberg-rest
+      - minio
+      - kafka
+
+  # -------------------
+  # Superset
+  # -------------------
+  superset-db:
+    image: postgres:15
+    container_name: superset-db
+    user: "0:0"
+    networks:
+      - data-net
+    environment:
+      POSTGRES_DB: superset
+      POSTGRES_USER: superset
+      POSTGRES_PASSWORD: superset
+    volumes:
+      - superset-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U superset -d superset"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  superset-redis:
+    image: redis:7
+    container_name: superset-redis
+    networks:
+      - data-net
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  superset:
+    image: apache/superset:4.0.2
+    container_name: superset
+    user: "0:0"
+    networks:
+      - data-net
+    depends_on:
+      - superset-db
+      - superset-redis
+    ports:
+      - "8088:8088"
+    environment:
+      SUPERSET_ENV: production
+      SUPERSET_SECRET_KEY: "cambia-esto-por-una-clave-larga"
+      DATABASE_DB: superset
+      DATABASE_USER: superset
+      DATABASE_PASSWORD: superset
+      DATABASE_HOST: superset-db
+      DATABASE_PORT: 5432
+      REDIS_HOST: superset-redis
+      REDIS_PORT: 6379
+    volumes:
+      - superset-home:/app/superset_home
+    command: >
+      /bin/bash -lc "
+      pip install --no-cache-dir 'trino[sqlalchemy]' &&
+      superset db upgrade &&
+      superset init &&
+      superset run -h 0.0.0.0 -p 8088
+      "
+
+  # -------------------
+  # Neo4j
+  # -------------------
+  neo4j:
+    image: neo4j:5
+    container_name: neo4j
+    user: "0:0"
+    networks:
+      - data-net
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    environment:
+      NEO4J_AUTH: neo4j/password
+    volumes:
+      - neo4j-data:/data
+
+  # -------------------
+  # Airflow
+  # -------------------
+  airflow-db:
+    image: postgres:15
+    container_name: airflow-db
+    user: "0:0"
+    networks:
+      - data-net
+    environment:
+      POSTGRES_DB: airflow
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+    volumes:
+      - airflow-db-data:/var/lib/postgresql/data
+
+  airflow:
+    image: apache/airflow:2.9.3
+    container_name: airflow
+    user: "0:0"
+    networks:
+      - data-net
+    depends_on:
+      - airflow-db
+    ports:
+      - "8090:8080"
+    environment:
+      AIRFLOW__CORE__EXECUTOR: SequentialExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-db/airflow
+      AIRFLOW__CORE__FERNET_KEY: ""
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    volumes:
+      - ./volumes/airflow/dags:/opt/airflow/dags
+    command: >
+      bash -c "
+      airflow db init &&
+      airflow users create \
+        --username admin \
+        --password admin \
+        --firstname admin \
+        --lastname admin \
+        --role Admin \
+        --email admin@example.com &&
+      airflow webserver & airflow scheduler
+      "
+
+  # -------------------
+  # Kafka (modo KRaft, sin Zookeeper)
+  # -------------------
+  kafka:
+    image: apache/kafka:4.0.2
+    container_name: kafka
+    networks:
+      - data-net
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_KRAFT_MODE: "true"
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_NODE_ID: 1
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
+      KAFKA_LISTENERS: INTERNAL://:29092,EXTERNAL://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,EXTERNAL://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_NUM_PARTITIONS: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+
+  # -------------------
+  # Kafdrop - UI para gestión de Kafka
+  # -------------------
+  kafdrop:
+    image: obsidiandynamics/kafdrop:latest
+    container_name: kafdrop
+    networks:
+      - data-net
+    ports:
+      - "9200:9000"
+    environment:
+      KAFKA_BROKERCONNECT: kafka:29092
+      JVM_OPTS: "-Xms32M -Xmx64M"
+      SERVER_SERVLET_CONTEXTPATH: "/"
+    depends_on:
+      - kafka
+
+volumes:
+  minio-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${PWD}/volumes/minio-data
+  spark-ivy:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${PWD}/volumes/spark-ivy
+  spark-work:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${PWD}/volumes/spark-work
+  superset-db-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${PWD}/volumes/superset-db-data
+  superset-home:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${PWD}/volumes/superset-home
+  neo4j-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${PWD}/volumes/neo4j-data
+  airflow-db-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${PWD}/volumes/airflow-db-data
