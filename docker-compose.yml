@@ -13,8 +13,9 @@ services:
       - data-net
     ports:
       - "8080:8080"
-    volumes:
-      - ./volumes/trino/catalog:/etc/trino/catalog
+    # Optional: mount catalog files from host only when working on Part 5.
+    # volumes:
+    #   - ./volumes/trino/catalog:/etc/trino/catalog
     depends_on:
       - iceberg-rest
       - minio
@@ -67,9 +68,14 @@ services:
       - minio
     entrypoint: >
       /bin/sh -lc "
-      mc alias set local http://minio:9000 admin admin123 &&
-      mc mb -p local/warehouse || true &&
-      mc anonymous set none local/warehouse || true &&
+      set -e;
+      until mc alias set local http://minio:9000 admin admin123 >/dev/null 2>&1 && mc ls local >/dev/null 2>&1; do
+        echo 'Esperando MinIO...';
+        sleep 2;
+      done;
+      mc mb -p local/warehouse >/dev/null 2>&1 || true;
+      mc anonymous set none local/warehouse >/dev/null;
+      mc stat local/warehouse >/dev/null;
       echo '✅ bucket warehouse listo';
       "
 
@@ -93,10 +99,15 @@ services:
       AWS_ACCESS_KEY_ID: admin
       AWS_SECRET_ACCESS_KEY: admin123
       KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
+    command: >
+      /bin/bash -lc "
+      mkdir -p /home/jovyan/.ivy2/cache /home/jovyan/.ivy2/jars &&
+      chmod -R 777 /home/jovyan/.ivy2 &&
+      start-notebook.py
+      "
     volumes:
-      - ./volumes/spark/conf:/usr/local/spark/conf
-      - ./volumes/spark/ivy2:/home/jovyan/.ivy2
-      - ./volumes/spark/work:/home/jovyan/work
+      - spark-ivy-cache:/home/jovyan/.ivy2
+      - ./notebooks:/home/jovyan/work
     depends_on:
       - iceberg-rest
       - minio
@@ -215,7 +226,7 @@ services:
       AIRFLOW__CORE__FERNET_KEY: ""
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
     volumes:
-      - ./volumes/airflow/dags:/opt/airflow/dags
+      - ./dags:/opt/airflow/dags
     command: >
       bash -c "
       airflow db init &&
@@ -271,44 +282,10 @@ services:
 
 volumes:
   minio-data:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ${PWD}/volumes/minio-data
-  spark-ivy:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ${PWD}/volumes/spark-ivy
-  spark-work:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ${PWD}/volumes/spark-work
   superset-db-data:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ${PWD}/volumes/superset-db-data
   superset-home:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ${PWD}/volumes/superset-home
   neo4j-data:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ${PWD}/volumes/neo4j-data
+  # Spark cache for jar resolution. Removing this makes startup slower.
+  spark-ivy-cache:
+  # Airflow metadata DB persistence (no host folder required).
   airflow-db-data:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ${PWD}/volumes/airflow-db-data

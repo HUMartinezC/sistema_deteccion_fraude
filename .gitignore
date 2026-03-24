@@ -37,6 +37,7 @@ logs/
 tmp/
 temp/
 *.tmp
+PROYECTO.md
 
 # -----------------------------
 # Entornos y secretos
