@@ -21,11 +21,14 @@ from urllib import error, request
 try:
     airflow_decorators = importlib.import_module("airflow.decorators")
     dag = airflow_decorators.dag
-    get_current_context = airflow_decorators.get_current_context
     task = airflow_decorators.task
+    try:
+        get_current_context = airflow_decorators.get_current_context
+    except AttributeError:
+        get_current_context = importlib.import_module("airflow.operators.python").get_current_context
     Param = importlib.import_module("airflow.models.param").Param
     AIRFLOW_AVAILABLE = True
-except ImportError:  # pragma: no cover - fallback para analisis local sin Airflow
+except (ImportError, AttributeError):  # pragma: no cover - fallback para analisis local sin Airflow
     AIRFLOW_AVAILABLE = False
 
     def dag(*args, **kwargs):
