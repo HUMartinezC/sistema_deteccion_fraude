@@ -112,7 +112,7 @@ services:
     ports:
       - "8889:8888"
     environment:
-      JUPYTER_TOKEN: "iespsur"
+      JUPYTER_TOKEN: ""
       SPARK_LOCAL_DIRS: /tmp
       AWS_REGION: us-east-1
       AWS_DEFAULT_REGION: us-east-1
@@ -124,7 +124,7 @@ services:
       /bin/bash -lc "
       mkdir -p /home/jovyan/.ivy2/cache /home/jovyan/.ivy2/jars &&
       chmod -R 777 /home/jovyan/.ivy2 &&
-      start-notebook.py
+      start-notebook.py --IdentityProvider.token='' --PasswordIdentityProvider.hashed_password=''
       "
     volumes:
       - spark-ivy-cache:/home/jovyan/.ivy2

@@ -8,7 +8,7 @@ import json
 import time
 import random
 from typing import Optional
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from uuid import uuid4
 
 from confluent_kafka import Producer
@@ -40,6 +40,11 @@ class PaymentEventGenerator:
         self.topic = topic
         self.faker = Faker()
         self.events_sent = 0
+        # Permite simular historico temporal para analitica en series temporales.
+        self.randomize_event_time = (
+            os.getenv("RANDOMIZE_EVENT_TIME", "true").lower() == "true"
+        )
+        self.event_lookback_days = int(os.getenv("EVENT_TIME_LOOKBACK_DAYS", "90"))
 
         # Pools de IDs predefinidos
         self.customers = [f"CUST_{i:05d}" for i in range(1, 51)]
@@ -114,7 +119,7 @@ class PaymentEventGenerator:
             merchant_id = random.choice(self.merchants)
 
         event = {
-            "event_time": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "event_time": self.sample_event_time(),
             "payment_id": payment_id,
             "customer_id": customer_id,
             "card_id": card_id,
@@ -128,6 +133,18 @@ class PaymentEventGenerator:
             "mcc": random.choice(self.mcc_codes),
         }
         return event
+
+    def sample_event_time(self) -> str:
+        """Genera marca temporal UTC actual o aleatoria dentro de una ventana pasada."""
+        if not self.randomize_event_time:
+            dt = datetime.now(timezone.utc)
+        else:
+            now_utc = datetime.now(timezone.utc)
+            max_seconds = max(1, self.event_lookback_days * 24 * 60 * 60)
+            random_offset = random.randint(0, max_seconds)
+            dt = now_utc - timedelta(seconds=random_offset)
+
+        return dt.isoformat().replace("+00:00", "Z")
 
     def sample_normal_device_for_card(self, card_id: str) -> str:
         """La mayoria de pagos de una tarjeta se hacen desde su dispositivo habitual."""
