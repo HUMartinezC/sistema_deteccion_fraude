@@ -274,15 +274,10 @@ services:
       - ./dags:/opt/airflow/dags
     command: >
       bash -c "
-      airflow db init &&
-      airflow users create \
-        --username admin \
-        --password admin \
-        --firstname admin \
-        --lastname admin \
-        --role Admin \
-        --email admin@example.com &&
-      airflow webserver & airflow scheduler
+      airflow db migrate &&
+      airflow users create --username admin --password admin --firstname admin --lastname admin --role Admin --email admin@example.com || true &&
+      airflow webserver --hostname 0.0.0.0 --port 8080 &
+      airflow scheduler
       "
 
   # -------------------

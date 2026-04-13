@@ -67,3 +67,57 @@ Si aun no tienes el driver, instala:
 ```bash
 pip install sqlalchemy-trino
 ```
+
+## Orquestacion manual y Neo4j
+
+El DAG manual de la parte final esta en [dags/fraud_neo4j_orchestration.py](dags/fraud_neo4j_orchestration.py). Hace tres cosas en cadena:
+
+1. Compacta la tabla Iceberg indicada con `ALTER TABLE ... EXECUTE optimize`.
+2. Exporta un subgrafo desde Trino a ficheros CSV temporales.
+3. Carga nodos y relaciones en Neo4j por HTTP.
+
+Parametros aceptados en el disparo manual:
+
+```json
+{
+	"source_table": "gold.payment_relations",
+	"start_ts": "2024-01-01T00:00:00Z",
+	"end_ts": "2099-12-31T23:59:59Z",
+	"graph_name": "fraud_graph"
+}
+```
+
+## Consultas Cypher utiles
+
+Dispositivos compartidos por varias tarjetas:
+
+```cypher
+MATCH (d:Device)<-[:FROM_DEVICE]-(p:Payment)-[:USES_CARD]->(c:Card)
+WHERE p.graph_name = $graph_name
+WITH d, count(DISTINCT c) AS cards
+WHERE cards > 1
+RETURN d.device_id AS device_id, cards
+ORDER BY cards DESC;
+```
+
+Tarjetas usadas en varios paises:
+
+```cypher
+MATCH (c:Card)<-[:USES_CARD]-(p:Payment)-[:IN_COUNTRY]->(country:Country)
+WHERE p.graph_name = $graph_name
+WITH c, count(DISTINCT country) AS countries
+WHERE countries > 1
+RETURN c.card_id AS card_id, countries
+ORDER BY countries DESC;
+```
+
+Comercios conectados a mas actividad sospechosa:
+
+```cypher
+MATCH (m:Merchant)<-[:AT_MERCHANT]-(p:Payment)
+WHERE p.graph_name = $graph_name AND coalesce(p.risk_score, 0) >= 25
+WITH m, count(*) AS alerts, collect(DISTINCT p.card_id) AS cards
+RETURN m.merchant_id AS merchant_id, alerts, size(cards) AS distinct_cards
+ORDER BY alerts DESC;
+```
+
