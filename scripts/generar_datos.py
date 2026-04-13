@@ -46,6 +46,13 @@ class PaymentEventGenerator:
         self.cards = [f"CARD_{i:05d}" for i in range(1, 200)]
         self.merchants = [f"MERCH_{i:05d}" for i in range(1, 100)]
         self.devices = [f"DEV_{i:05d}" for i in range(1, 100)]
+        # Perfil base por tarjeta para que el trafico normal no parezca siempre anomalo.
+        self.card_primary_device = {
+            card_id: random.choice(self.devices) for card_id in self.cards
+        }
+        self.card_home_country = {
+            card_id: self.faker.country_code() for card_id in self.cards
+        }
         self.currencies = ["USD", "EUR", "GBP", "AUD", "CAD"]
         self.mcc_codes = [
             "5411",  # Grocery stores
@@ -91,6 +98,9 @@ class PaymentEventGenerator:
         customer_id=None,
         card_id=None,
         merchant_id=None,
+        device_id=None,
+        country=None,
+        amount=None,
         status="approved",
     ):
         """Genera un evento de pago individual con los 12 campos requeridos."""
@@ -109,15 +119,39 @@ class PaymentEventGenerator:
             "customer_id": customer_id,
             "card_id": card_id,
             "merchant_id": merchant_id,
-            "device_id": random.choice(self.devices),
+            "device_id": device_id or random.choice(self.devices),
             "ip": self.faker.ipv4(),
-            "country": self.faker.country_code(),
-            "amount": round(random.uniform(10, 500), 2),
+            "country": country or self.faker.country_code(),
+            "amount": round(amount if amount is not None else random.uniform(10, 500), 2),
             "currency": random.choice(self.currencies),
             "status": status,
             "mcc": random.choice(self.mcc_codes),
         }
         return event
+
+    def sample_normal_device_for_card(self, card_id: str) -> str:
+        """La mayoria de pagos de una tarjeta se hacen desde su dispositivo habitual."""
+        primary_device = self.card_primary_device[card_id]
+        if random.random() < 0.9:
+            return primary_device
+        return random.choice(self.devices)
+
+    def sample_country_for_card(self, card_id: str, force_foreign: bool = False) -> str:
+        """Mantiene pais habitual, salvo cuando se fuerza comportamiento anomalo."""
+        home_country = self.card_home_country[card_id]
+        if not force_foreign and random.random() < 0.92:
+            return home_country
+
+        foreign_country = self.faker.country_code()
+        while foreign_country == home_country:
+            foreign_country = self.faker.country_code()
+        return foreign_country
+
+    def sample_amount(self) -> float:
+        """Distribucion sesgada a importes medios-bajos con cola alta ocasional."""
+        if random.random() < 0.97:
+            return random.uniform(10, 320)
+        return random.uniform(320, 800)
 
     def publish_event(self, event):
         """Publica un evento a Kafka de forma síncrona."""
@@ -136,7 +170,14 @@ class PaymentEventGenerator:
 
     def generate_normal_payment(self):
         """Genera un pago normal (aprobado)."""
-        event = self.generate_payment_event(status="approved")
+        card_id = random.choice(self.cards)
+        event = self.generate_payment_event(
+            card_id=card_id,
+            device_id=self.sample_normal_device_for_card(card_id),
+            country=self.sample_country_for_card(card_id),
+            amount=self.sample_amount(),
+            status="approved",
+        )
         self.publish_event(event)
 
     def generate_retry_sequence(self):
@@ -145,12 +186,15 @@ class PaymentEventGenerator:
         card_id = random.choice(self.cards)
         payment_base_id = str(uuid4())
 
-        retries = random.randint(2, 3)
+        retries = 2
         for i in range(retries):
             event = self.generate_payment_event(
                 payment_id=f"{payment_base_id}_retry_{i}",
                 customer_id=customer_id,
                 card_id=card_id,
+                device_id=self.sample_normal_device_for_card(card_id),
+                country=self.sample_country_for_card(card_id),
+                amount=self.sample_amount(),
                 status="declined",
             )
             self.publish_event(event)
@@ -161,12 +205,15 @@ class PaymentEventGenerator:
         card_id = random.choice(self.cards)
         customer_id = random.choice(self.customers)
 
-        num_transactions = random.randint(5, 8)
+        num_transactions = random.randint(3, 5)
         for _ in range(num_transactions):
             event = self.generate_payment_event(
                 customer_id=customer_id,
                 card_id=card_id,
-                status=random.choice(["approved"] * 4 + ["declined"]),
+                device_id=self.sample_normal_device_for_card(card_id),
+                country=self.sample_country_for_card(card_id),
+                amount=self.sample_amount(),
+                status=random.choice(["approved"] * 5 + ["declined"]),
             )
             self.publish_event(event)
             time.sleep(0.2)
@@ -176,11 +223,14 @@ class PaymentEventGenerator:
         card_id = random.choice(self.cards)
         customer_id = random.choice(self.customers)
 
-        num_countries = random.randint(3, 4)
+        num_countries = random.randint(2, 3)
         for _ in range(num_countries):
             event = self.generate_payment_event(
                 customer_id=customer_id,
                 card_id=card_id,
+                device_id=self.sample_normal_device_for_card(card_id),
+                country=self.sample_country_for_card(card_id, force_foreign=True),
+                amount=self.sample_amount(),
                 status="approved",
             )
             self.publish_event(event)
@@ -191,7 +241,7 @@ class PaymentEventGenerator:
         card_id = random.choice(self.cards)
         customer_id = random.choice(self.customers)
 
-        num_merchants = random.randint(3, 5)
+        num_merchants = random.randint(2, 4)
         merchant_ids = random.sample(self.merchants, k=num_merchants)
 
         for merchant_id in merchant_ids:
@@ -199,7 +249,10 @@ class PaymentEventGenerator:
                 customer_id=customer_id,
                 card_id=card_id,
                 merchant_id=merchant_id,
-                status=random.choice(["approved"] * 3 + ["declined"]),
+                device_id=self.sample_normal_device_for_card(card_id),
+                country=self.sample_country_for_card(card_id),
+                amount=self.sample_amount(),
+                status=random.choice(["approved"] * 4 + ["declined"]),
             )
             self.publish_event(event)
             time.sleep(0.7)
@@ -227,26 +280,26 @@ class PaymentEventGenerator:
             while num_events is None or events_generated < num_events:
                 scenario_roll = random.random()
 
-                # 65% pagos normales
-                if scenario_roll < 0.65:
+                # 92% pagos normales
+                if scenario_roll < 0.92:
                     self.generate_normal_payment()
 
-                # 10% reintentos sospechosos
-                elif scenario_roll < 0.75:
+                # 3% reintentos sospechosos
+                elif scenario_roll < 0.95:
                     logger.warning("⚠️  [RETRY SEQUENCE]")
                     self.generate_retry_sequence()
 
-                # 10% alta frecuencia
-                elif scenario_roll < 0.85:
+                # 2% alta frecuencia
+                elif scenario_roll < 0.97:
                     logger.warning("⚠️  [HIGH FREQUENCY]")
                     self.generate_high_frequency_sequence()
 
-                # 10% múltiples países
-                elif scenario_roll < 0.95:
+                # 2% múltiples países
+                elif scenario_roll < 0.99:
                     logger.warning("⚠️  [MULTI-COUNTRY]")
                     self.generate_multi_country_sequence()
 
-                # 5% múltiples comercios
+                # 1% múltiples comercios
                 else:
                     logger.warning("⚠️  [MULTI-MERCHANT]")
                     self.generate_multi_merchant_sequence()

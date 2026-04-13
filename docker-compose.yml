@@ -13,9 +13,8 @@ services:
       - data-net
     ports:
       - "8080:8080"
-    # Optional: mount catalog files from host only when working on Part 5.
-    # volumes:
-    #   - ./volumes/trino/catalog:/etc/trino/catalog
+    volumes:
+      - ./volumes/trino/catalog:/etc/trino/catalog
     depends_on:
       - iceberg-rest
       - minio
@@ -23,6 +22,24 @@ services:
   # -------------------
   # Iceberg REST
   # -------------------
+  iceberg-db:
+    image: postgres:15
+    container_name: iceberg-db
+    user: "0:0"
+    networks:
+      - data-net
+    environment:
+      POSTGRES_DB: iceberg
+      POSTGRES_USER: iceberg
+      POSTGRES_PASSWORD: iceberg
+    volumes:
+      - iceberg-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U iceberg -d iceberg"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
   iceberg-rest:
     image: tabulario/iceberg-rest:latest
     container_name: iceberg-rest
@@ -32,6 +49,9 @@ services:
       - "8181:8181"
     environment:
       CATALOG_WAREHOUSE: s3://warehouse/
+      CATALOG_URI: jdbc:postgresql://iceberg-db:5432/iceberg
+      CATALOG_JDBC_USER: iceberg
+      CATALOG_JDBC_PASSWORD: iceberg
       CATALOG_IO__IMPL: org.apache.iceberg.aws.s3.S3FileIO
       CATALOG_S3_ENDPOINT: http://minio:9000
       CATALOG_S3_PATH__STYLE__ACCESS: "true"
@@ -39,6 +59,7 @@ services:
       CATALOG_S3_SECRET__ACCESS__KEY: admin123
       AWS_REGION: us-east-1
     depends_on:
+      - iceberg-db
       - minio
 
   # -------------------
@@ -160,6 +181,11 @@ services:
     environment:
       SUPERSET_ENV: production
       SUPERSET_SECRET_KEY: "cambia-esto-por-una-clave-larga"
+      SUPERSET_ADMIN_USER: admin
+      SUPERSET_ADMIN_PASSWORD: admin
+      SUPERSET_ADMIN_FIRSTNAME: Admin
+      SUPERSET_ADMIN_LASTNAME: User
+      SUPERSET_ADMIN_EMAIL: admin@example.com
       DATABASE_DB: superset
       DATABASE_USER: superset
       DATABASE_PASSWORD: superset
@@ -173,6 +199,7 @@ services:
       /bin/bash -lc "
       pip install --no-cache-dir 'trino[sqlalchemy]' &&
       superset db upgrade &&
+      superset fab create-admin --username $${SUPERSET_ADMIN_USER} --firstname $${SUPERSET_ADMIN_FIRSTNAME} --lastname $${SUPERSET_ADMIN_LASTNAME} --email $${SUPERSET_ADMIN_EMAIL} --password $${SUPERSET_ADMIN_PASSWORD} || true &&
       superset init &&
       superset run -h 0.0.0.0 -p 8088
       "
@@ -282,6 +309,7 @@ services:
 
 volumes:
   minio-data:
+  iceberg-db-data:
   superset-db-data:
   superset-home:
   neo4j-data:
