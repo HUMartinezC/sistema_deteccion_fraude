@@ -14,10 +14,6 @@ from uuid import uuid4
 from confluent_kafka import Producer
 from loguru import logger
 from faker import Faker
-from dotenv import load_dotenv
-
-# Cargar variables de entorno desde .env
-load_dotenv()
 
 # Configuración de logging
 logger.remove()

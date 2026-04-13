@@ -16,8 +16,15 @@ services:
     volumes:
       - ./volumes/trino/catalog:/etc/trino/catalog
     depends_on:
-      - iceberg-rest
-      - minio
+      iceberg-rest:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 2 bash -c 'exec 3<>/dev/tcp/localhost/8080 && echo -e \"HEAD /ui/login.html HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n\" >&3' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
 
   # -------------------
   # Iceberg REST
@@ -59,8 +66,15 @@ services:
       CATALOG_S3_SECRET__ACCESS__KEY: admin123
       AWS_REGION: us-east-1
     depends_on:
-      - iceberg-db
-      - minio
+      iceberg-db:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 2 bash -c 'exec 3<>/dev/tcp/localhost/8181 && echo -e \"HEAD /v1/config HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n\" >&3' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
 
   # -------------------
   # MinIO
@@ -174,8 +188,12 @@ services:
     networks:
       - data-net
     depends_on:
-      - superset-db
-      - superset-redis
+      superset-db:
+        condition: service_healthy
+      superset-redis:
+        condition: service_healthy
+      trino:
+        condition: service_healthy
     ports:
       - "8088:8088"
     environment:
