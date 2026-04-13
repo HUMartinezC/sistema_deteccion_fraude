@@ -1,0 +1,52 @@
+name,description,query,id,parentId,isFolder
+Fraude,,,0,,true
+Grafos,,,1,0,true
+Dispositivos compartidos por múltiples tarjetas,,"MATCH (d:Device)<-[:FROM_DEVICE]-(p:Payment)-[:USES_CARD]->(c:Card)
+WHERE p.graph_name = $graph_name
+WITH d, count(DISTINCT c) AS total_cards
+WHERE total_cards >= 3
+ORDER BY total_cards DESC
+LIMIT 10
+MATCH (d)<-[:FROM_DEVICE]-(p2:Payment)-[:USES_CARD]->(c2:Card)
+WHERE p2.graph_name = $graph_name
+RETURN d, p2, c2;
+
+",2,1,false
+Tarjetas utilizadas en múltiples países,,"MATCH (c:Card)<-[:USES_CARD]-(p:Payment)-[:IN_COUNTRY]->(co:Country)
+WHERE p.graph_name = $graph_name
+WITH c, count(DISTINCT co) AS total_countries
+WHERE total_countries >= 2
+ORDER BY total_countries DESC
+LIMIT 10
+MATCH (c)<-[:USES_CARD]-(p2:Payment)-[:IN_COUNTRY]->(co2:Country)
+WHERE p2.graph_name = $graph_name
+RETURN c, p2, co2;",3,1,false
+Comercios conectados a múltiples entidades sospechosas,,"MATCH (m:Merchant)<-[:AT_MERCHANT]-(p:Payment)
+WHERE p.graph_name = $graph_name
+AND coalesce(p.risk_score, 0) >= 25
+WITH m,
+count(*) AS suspicious_payments,
+count(DISTINCT p.card_id) AS cards,
+count(DISTINCT p.device_id) AS devices,
+count(DISTINCT p.customer_id) AS customers
+WHERE suspicious_payments >= 3
+AND (cards >= 2 OR devices >= 2 OR customers >= 2)
+ORDER BY suspicious_payments DESC
+LIMIT 10
+MATCH (m)<-[:AT_MERCHANT]-(p2:Payment)-[:USES_CARD]->(c:Card)
+MATCH (p2)-[:FROM_DEVICE]->(d:Device)
+MATCH (cu:Customer)-[:MADE_PAYMENT]->(p2)
+WHERE p2.graph_name = $graph_name
+AND coalesce(p2.risk_score, 0) >= 25
+RETURN m, p2, c, d, cu;",4,1,false
+Posibles agrupaciones de comportamiento anómalo,,"MATCH (d:Device)<-[:FROM_DEVICE]-(p:Payment)-[:USES_CARD]->(c:Card)
+WHERE p.graph_name = $graph_name
+WITH d, collect(DISTINCT c) AS cards, count(DISTINCT c) AS card_count
+WHERE card_count >= 4
+LIMIT 10
+UNWIND cards AS c1
+MATCH (c1)<-[:USES_CARD]-(p2:Payment)-[:IN_COUNTRY]->(co:Country)
+MATCH (p2)-[:AT_MERCHANT]->(m:Merchant)
+WHERE p2.graph_name = $graph_name
+RETURN d, c1, p2, co, m;",5,1,false
+Fijar parámetro para grafos,,":param graph_name => ""fraud_graph"";",6,1,false
